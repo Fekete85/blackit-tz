@@ -1,0 +1,40 @@
+# tz — időzóna-feloldás koordinátából, az api.blackit.hu alatt.
+#
+# Miért külön konténer és nem a blackit-api-ba építve: a blackit-api a Zammad
+# API-tokenjét tartja és rajta van a belső zammad_default hálózaton. Egy
+# publikus, engedékenyebb CORS-ú végpontot ugyanabba a processzbe tenni azt
+# jelentené, hogy egy hiba az új kezelőben a ticketrendszer hitelesítő adata
+# mellé kerül. A router-split ugyanazt a hosztnevet adja, izoláció nélküli
+# kockázat nélkül — ugyanaz a minta, amit a sign és a meres is használ.
+
+services:
+  tz:
+    build: .
+    container_name: tz
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Budapest
+      ALLOWED_ORIGINS: "https://celestial.blackit.hu,https://csillag.blackit.hu"
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # Per-IP rate limit. Egy feloldás olcsó, de nem ingyen: a poligon-keresés
+      # CPU-t eszik, és a szolgáltatás hitelesítés nélkül publikus.
+      - "traefik.http.middlewares.tz-rl.ratelimit.average=30"
+      - "traefik.http.middlewares.tz-rl.ratelimit.period=1m"
+      - "traefik.http.middlewares.tz-rl.ratelimit.burst=15"
+      # Router-split: csak a /timezone útvonal, magasabb prioritással, hogy a
+      # blackit-api catch-all Host-szabálya alól kiemelje.
+      - "traefik.http.routers.tz.rule=Host(`api.blackit.hu`) && PathPrefix(`/timezone`)"
+      - "traefik.http.routers.tz.entrypoints=websecure"
+      - "traefik.http.routers.tz.tls=true"
+      - "traefik.http.routers.tz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.tz.priority=100"
+      - "traefik.http.routers.tz.middlewares=security-headers@docker,tz-rl@docker"
+      - "traefik.http.services.tz.loadbalancer.server.port=8080"
+
+networks:
+  proxy:
+    external: true
